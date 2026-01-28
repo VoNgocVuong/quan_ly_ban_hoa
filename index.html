@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quản Lý Vỉa Hè - Safari Fix</title>
+    <style>
+        /* --- 1. CẤU HÌNH GIAO DIỆN CHUNG --- */
+        body { 
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; 
+            background: #f4f4f9; 
+            margin: 0; padding: 10px;
+            font-size: 14px;
+            overscroll-behavior-y: none; /* Chặn kéo trang để reload trên mobile */
+        }
+
+        .controls { 
+            background: white; padding: 15px; margin-bottom: 15px; 
+            border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+            position: sticky; top: 0; z-index: 1000;
+        }
+
+        /* --- 2. TỐI ƯU CẢM ỨNG (TOUCH ACTION) --- */
+        /* Giúp thao tác bấm nhanh hơn, không bị trễ 300ms trên điện thoại */
+        button, .cell, input, .modal-content {
+            touch-action: manipulation; 
+        }
+
+        /* --- 3. THANH CÔNG CỤ --- */
+        .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        
+        button { 
+            padding: 10px 14px; 
+            cursor: pointer; border: none; border-radius: 6px; 
+            font-weight: 600; font-size: 13px; color: white; background: #007bff;
+            transition: 0.2s; white-space: nowrap;
+        }
+        button:active { opacity: 0.8; transform: translateY(1px); }
+        button.success { background: #28a745; }
+        button.warning { background: #ff9800; color: black; }
+        button.secondary { background: #6c757d; }
+        button.danger { background: #dc3545; }
+
+        .search-box { display: flex; gap: 5px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ccc; }
+        .search-box input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; /* Font 16px để iOS không zoom */ }
+
+        /* --- 4. LƯỚI BẢN ĐỒ --- */
+        .map-wrapper {
+            overflow: auto; 
+            background: #e9ecef; border: 1px solid #ccc; padding: 10px; border-radius: 4px;
+            max-height: 75vh;
+            -webkit-overflow-scrolling: touch; /* Cuộn mượt trên iOS */
+        }
+
+        .grid-container { 
+            display: grid; gap: 1px; background-color: #999; 
+            width: fit-content; border: 2px solid #333; 
+        }
+
+        .cell { 
+            width: 44px; height: 44px; /* Kích thước chuẩn điểm chạm Apple */
+            display: flex; align-items: center; justify-content: center; 
+            font-size: 10px; cursor: pointer; position: relative; 
+            user-select: none; -webkit-user-select: none; /* Safari fix chọn text */
+        }
+        .cell:hover { border: 2px solid #555; z-index: 10; }
+
+        /* --- 5. MÀU SẮC & TRẠNG THÁI --- */
+        .type-road { background-color: #555 !important; color: #fff; }
+        .type-tree { background-color: #4CAF50 !important; color: white; border-radius: 50%; }
+        
+        .cell.selected { background-color: #2196F3 !important; color: white; border: 2px solid darkblue; }
+        .cell.rented-ok { background-color: #FFD700 !important; color: black; font-weight: bold; border: 1px dashed #333; }
+        .cell.rented-warning { 
+            background-color: #FF5252 !important; color: white; font-weight: bold; 
+            border: 2px solid red; animation: pulse 1.5s infinite; 
+        }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        body.mode-selecting-area .cell { cursor: crosshair; }
+        body.mode-selecting-area .map-wrapper { border: 3px dashed #ff9800; }
+
+        /* --- 6. MODAL (ĐÃ FIX SAFARI) --- */
+        .modal { 
+            display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; 
+            background-color: rgba(0,0,0,0.5); align-items: center; justify-content: center; 
+            
+            /* Cập nhật fix lỗi Safari/iOS */
+            -webkit-backdrop-filter: blur(4px); /* Safari 9+ */
+            backdrop-filter: blur(4px);         /* Chrome, Edge, Firefox */
+        }
+        
+        .modal-content { 
+            background-color: white; padding: 20px; border-radius: 12px; width: 90%; max-width: 400px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2); 
+            animation: slideIn 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+        @keyframes slideIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; color: #333; }
+        .form-group input { width: 100%; padding: 12px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; font-size: 16px;}
+        
+        .legend-container { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .legend-item { display: flex; align-items: center; font-size: 12px; background: #eee; padding: 4px 8px; border-radius: 4px; }
+        .color-box { width: 14px; height: 14px; border: 1px solid #999; margin-right: 5px; border-radius: 2px;}
+
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <h3 style="margin: 0 0 10px 0; font-size: 18px;">📱 Quản Lý Vỉa Hè</h3>
+        
+        <div id="dynamic-legend" class="legend-container"></div>
+        
+        <div class="toolbar">
+            <button class="success" onclick="openZoneModal()">➕ Khu</button>
+            <button class="warning" onclick="activateAreaMode()">📐 Đo</button>
+            <button onclick="openContractModal()">📝 Thuê</button>
+            <button class="secondary" onclick="clearSelection()">Bỏ chọn</button>
+            <button class="danger" onclick="hardReset()">⚠️ Xóa</button>
+        </div>
+
+        <div class="search-box">
+            <input type="number" id="searchInput" placeholder="🔍 Nhập số điện thoại...">
+            <button onclick="searchTenant()">Tìm</button>
+        </div>
+
+        <div id="info" style="margin-top: 10px; font-size: 13px; color: #0056b3; font-weight: 500;">Sẵn sàng...</div>
+    </div>
+
+    <div class="map-wrapper">
+        <div id="map" class="grid-container"></div>
+    </div>
+
+    <div id="contractModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0">📝 Hợp Đồng Mới</h3>
+            <div class="form-group"><label>Tên khách hàng:</label><input type="text" id="inpName" placeholder="Nhập tên..."></div>
+            <div class="form-group"><label>Số điện thoại:</label><input type="tel" id="inpPhone" placeholder="09..."></div>
+            <div class="form-group"><label>Bắt đầu:</label><input type="date" id="inpStart"></div>
+            <div class="form-group"><label>Kết thúc:</label><input type="date" id="inpEnd"></div>
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="secondary" onclick="closeModal('contractModal')">Đóng</button>
+                <button onclick="saveContract()">Lưu Hợp Đồng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="zoneModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0; color:#28a745">➕ Thêm Khu Mới</h3>
+            <div class="form-group"><label>Tên Khu:</label><input type="text" id="zName" placeholder="VD: Khu C"></div>
+            <div class="form-group" style="display:flex; gap:10px">
+                <div style="flex:1"><label>Từ Cột:</label><input type="number" id="zStart" min="0"></div>
+                <div style="flex:1"><label>Đến Cột:</label><input type="number" id="zEnd" min="0"></div>
+            </div>
+            <div class="form-group">
+                <label>Màu (Gợi ý):</label>
+                <input type="color" id="zColor" value="#ccffcc" style="height:44px; padding: 2px; cursor: pointer;">
+            </div>
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="secondary" onclick="closeModal('zoneModal')">Đóng</button>
+                <button class="success" onclick="saveNewZone()">Tạo Khu</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="sizeModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0; color:#ff9800">📐 Chọn Kích Thước</h3>
+            <p style="font-size:13px; color:#666; margin-bottom: 15px;">Mốc tính từ: <b id="anchorLabel"></b></p>
+            <div class="form-group" style="display:flex; gap:10px">
+                <div style="flex:1"><label>Dài (m):</label><input type="number" id="inpSizeL" value="3" min="1"></div>
+                <div style="flex:1"><label>Rộng (m):</label><input type="number" id="inpSizeW" value="2" min="1"></div>
+            </div>
+            <div style="text-align: right; margin-top: 20px;">
+                <button class="secondary" onclick="closeModal('sizeModal')">Hủy</button>
+                <button class="warning" onclick="applySizeSelection()">✅ Chọn Vùng</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0; color:#007bff">📋 Chi Tiết Hợp Đồng</h3>
+            <div id="detailContent" style="background:#f8f9fa; padding:15px; border-radius:8px; font-size:14px; line-height:1.6; margin-bottom:20px;"></div>
+            <div style="text-align: right;">
+                <button class="secondary" onclick="closeModal('detailModal')">Đóng</button>
+                <button class="danger" onclick="terminateContract()">🗑️ Thanh Lý</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIG & UTILS ---
+        const PALETTE = ['#E3F2FD', '#FFF3E0', '#E8F5E9', '#F3E5F5', '#FFEBEE', '#E0F7FA', '#FFFDE7', '#FBE9E7', '#F1F8E9', '#E1F5FE', '#FFF8E1', '#FCE4EC', '#E0E0E0', '#B2DFDB', '#D1C4E9'];
+        const DEFAULT_ZONES = [{ id: 'A', name: 'Khu A', start: 0, end: 9, color: '#E3F2FD' }, { id: 'B', name: 'Khu B', start: 10, end: 19, color: '#FFF3E0' }];
+        
+        let currentZones = [];
+        const ROWS = 10;
+        let gridData = [];
+        let selectedCells = [];
+        let isSelectingAreaMode = false;
+        let anchorCell = null;
+        let currentViewingTenant = "";
+
+        const mapElement = document.getElementById('map');
+        const infoElement = document.getElementById('info');
+        const legendElement = document.getElementById('dynamic-legend');
+
+        class GridCell {
+            constructor(row, col, surfaceType, zoneObj) {
+                this.id = `R${row}-C${col}`; this.row = row; this.col = col;
+                this.system = { zoneId: zoneObj ? zoneObj.id : 'N/A', baseColor: zoneObj ? zoneObj.color : '#fff', zoneName: zoneObj ? zoneObj.name : 'Unknown' };
+                this.physical = { type: surfaceType, isUsable: (surfaceType === 'sidewalk') };
+                this.business = { status: 'free', tenant: '', phone: '', startDate: '', endDate: '' };
+            }
+            canSelect() { return this.physical.isUsable && this.business.status === 'free'; }
+        }
+
+        // --- 2. DATABASE ---
+        function saveData() {
+            localStorage.setItem('viahe_zones', JSON.stringify(currentZones));
+            let rentedData = [];
+            gridData.forEach(r => r.forEach(c => {
+                if (c.business.status === 'rented') rentedData.push({ id: c.id, business: c.business });
+            }));
+            localStorage.setItem('viahe_rented', JSON.stringify(rentedData));
+        }
+
+        function loadData() {
+            const savedZones = localStorage.getItem('viahe_zones');
+            currentZones = savedZones ? JSON.parse(savedZones) : JSON.parse(JSON.stringify(DEFAULT_ZONES));
+            initGridStructure();
+            const savedRented = localStorage.getItem('viahe_rented');
+            if (savedRented) {
+                JSON.parse(savedRented).forEach(item => {
+                    let p = item.id.replace('R','').split('-C'); 
+                    if (gridData[p[0]] && gridData[p[0]][p[1]]) gridData[p[0]][p[1]].business = item.business;
+                });
+            }
+            renderMap();
+        }
+
+        function hardReset() {
+            if(confirm("Xóa sạch toàn bộ dữ liệu?")) { localStorage.clear(); location.reload(); }
+        }
+
+        // --- 3. MAP LOGIC ---
+        function initGridStructure() {
+            gridData = [];
+            let maxCol = 19;
+            if (currentZones.length > 0) maxCol = Math.max(...currentZones.map(z => z.end));
+            const COLS = maxCol + 1;
+            mapElement.style.gridTemplateColumns = `repeat(${COLS}, 44px)`;
+            
+            let html = currentZones.map(z => `<div class="legend-item"><span class="color-box" style="background:${z.color}"></span>${z.name}</div>`).join('');
+            html += `<div class="legend-item"><span class="color-box" style="background:#FF5252"></span>Hết hạn</div>`;
+            legendElement.innerHTML = html;
+
+            for (let r = 0; r < ROWS; r++) {
+                let rowData = [];
+                for (let c = 0; c < COLS; c++) {
+                    let type = (r < 4) ? 'sidewalk' : ((r === 4 && c % 5 === 0) ? 'tree' : (r === 4 ? 'sidewalk' : 'road'));
+                    let zone = currentZones.find(z => c >= z.start && c <= z.end);
+                    rowData.push(new GridCell(r, c, type, zone));
+                }
+                gridData.push(rowData);
+            }
+        }
+
+        function renderMap() {
+            mapElement.innerHTML = '';
+            const today = new Date(); today.setHours(0,0,0,0);
+
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < gridData[r].length; c++) {
+                    let cell = gridData[r][c];
+                    let div = document.createElement('div');
+                    div.className = `cell type-${cell.physical.type}`;
+                    
+                    if (cell.physical.type === 'sidewalk' && cell.business.status === 'free') div.style.backgroundColor = cell.system.baseColor;
+
+                    if (cell.business.status === 'rented') {
+                        let endDate = new Date(cell.business.endDate);
+                        let diffDays = Math.ceil((endDate - today) / (86400000)); 
+                        div.classList.add(diffDays <= 2 ? 'rented-warning' : 'rented-ok');
+                        div.innerText = cell.business.tenant.substring(0, 3);
+                    }
+
+                    if (selectedCells.some(s => s.id === cell.id)) div.classList.add('selected');
+                    div.onclick = () => toggleSelect(cell);
+                    mapElement.appendChild(div);
+                }
+            }
+        }
+
+        // --- 4. INTERACTION ---
+        function toggleSelect(cell) {
+            if (isSelectingAreaMode) {
+                if (!cell.canSelect()) return alert("Ô này không thể làm mốc!");
+                anchorCell = cell;
+                document.getElementById('anchorLabel').innerText = `${cell.id}`;
+                document.getElementById('sizeModal').style.display = 'flex';
+                document.body.classList.remove('mode-selecting-area');
+                return;
+            }
+            if (cell.business.status === 'rented') { openDetailModal(cell); return; }
+            if (!cell.canSelect()) return;
+            const index = selectedCells.findIndex(i => i.id === cell.id);
+            if (index > -1) selectedCells.splice(index, 1); else selectedCells.push(cell);
+            renderMap();
+        }
+
+        // --- 5. FUNCTIONALITIES ---
+        function searchTenant() {
+            const phone = document.getElementById('searchInput').value.trim();
+            if (!phone) return alert("Nhập số điện thoại!");
+            selectedCells = []; let found = 0; let tenantName = "";
+            gridData.forEach(r => r.forEach(c => {
+                if (c.business.status === 'rented' && c.business.phone.includes(phone)) {
+                    selectedCells.push(c); found++; tenantName = c.business.tenant;
+                }
+            }));
+            if (found > 0) {
+                renderMap();
+                infoElement.innerHTML = `✅ Tìm thấy: <b>${tenantName}</b> (${found}m²)`;
+                document.querySelector('.cell.selected').scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+            } else { alert("Không tìm thấy!"); }
+        }
+
+        function openZoneModal() {
+            let next = currentZones.length > 0 ? Math.max(...currentZones.map(z=>z.end)) + 1 : 0;
+            document.getElementById('zStart').value = next; document.getElementById('zEnd').value = next + 9;
+            const used = currentZones.map(z => z.color.toUpperCase());
+            let suggest = PALETTE.find(c => !used.includes(c)) || '#' + Math.floor(Math.random()*16777215).toString(16);
+            document.getElementById('zColor').value = suggest;
+            document.getElementById('zoneModal').style.display = 'flex';
+        }
+
+        function openDetailModal(cell) {
+            currentViewingTenant = cell.business.tenant;
+            let area = 0;
+            gridData.forEach(r => r.forEach(c => { if(c.business.tenant === currentViewingTenant) area++; }));
+            document.getElementById('detailContent').innerHTML = `
+                <b>Khách hàng:</b> ${cell.business.tenant}<br>
+                <b>SĐT:</b> <a href="tel:${cell.business.phone}">${cell.business.phone}</a><br>
+                <b>Hạn:</b> ${cell.business.endDate}<br>
+                <b>Diện tích:</b> ${area}m²<br>
+                <b>Khu:</b> ${cell.system.zoneName}
+            `;
+            document.getElementById('detailModal').style.display = 'flex';
+        }
+
+        function terminateContract() {
+            if(!currentViewingTenant) return;
+            if(confirm(`Hủy hợp đồng của ${currentViewingTenant}?`)) {
+                gridData.forEach(r => r.forEach(c => {
+                    if(c.business.tenant === currentViewingTenant) c.business = { status: 'free', tenant: '', phone: '', startDate: '', endDate: '' };
+                }));
+                saveData(); closeModal('detailModal'); renderMap();
+            }
+        }
+
+        function activateAreaMode() {
+            isSelectingAreaMode = true; selectedCells = []; renderMap();
+            document.body.classList.add('mode-selecting-area');
+            infoElement.innerHTML = `🔽 Click vào ô mốc (Góc trên-trái)`;
+        }
+
+        function applySizeSelection() {
+            const L = parseInt(document.getElementById('inpSizeL').value);
+            const W = parseInt(document.getElementById('inpSizeW').value);
+            if (!anchorCell || L < 1 || W < 1) return;
+            selectedCells = [];
+            for (let r = anchorCell.row; r < anchorCell.row + W; r++) {
+                for (let c = anchorCell.col; c < anchorCell.col + L; c++) {
+                    if (gridData[r] && gridData[r][c] && gridData[r][c].canSelect()) selectedCells.push(gridData[r][c]);
+                }
+            }
+            isSelectingAreaMode = false; closeModal('sizeModal'); renderMap();
+        }
+
+        function saveNewZone() {
+            const name = document.getElementById('zName').value;
+            const start = parseInt(document.getElementById('zStart').value);
+            const end = parseInt(document.getElementById('zEnd').value);
+            const color = document.getElementById('zColor').value;
+            if(!name || isNaN(start) || isNaN(end) || start > end) return alert("Lỗi nhập liệu!");
+            if(currentZones.some(z => (start >= z.start && start <= z.end) || (end >= z.start && end <= z.end))) return alert("Chồng lấn!");
+            currentZones.push({ id: name, name: name, start: start, end: end, color: color });
+            saveData(); closeModal('zoneModal'); loadData();
+        }
+
+        function saveContract() {
+            const name = document.getElementById('inpName').value;
+            const phone = document.getElementById('inpPhone').value;
+            const start = document.getElementById('inpStart').value;
+            const end = document.getElementById('inpEnd').value;
+            if(!name || !end) return alert("Thiếu tên/ngày!");
+            selectedCells.forEach(cell => {
+                cell.business.status = 'rented'; cell.business.tenant = name;
+                cell.business.phone = phone; cell.business.startDate = start; cell.business.endDate = end;
+            });
+            saveData(); closeModal('contractModal'); selectedCells = []; renderMap();
+        }
+
+        function openContractModal() {
+            if(selectedCells.length===0) return alert("Vui lòng chọn ô trước!");
+            document.getElementById('inpStart').valueAsDate = new Date();
+            let d = new Date(); d.setDate(d.getDate() + 30);
+            document.getElementById('inpEnd').valueAsDate = d;
+            document.getElementById('contractModal').style.display = 'flex';
+        }
+
+        function closeModal(id) { 
+            document.getElementById(id).style.display = 'none'; 
+            if(id === 'sizeModal') { isSelectingAreaMode = false; document.body.classList.remove('mode-selecting-area'); renderMap(); }
+        }
+        function clearSelection() { selectedCells = []; isSelectingAreaMode = false; document.body.classList.remove('mode-selecting-area'); renderMap(); }
+
+        loadData();
+    </script>
+</body>
+</html>
